@@ -1,0 +1,59 @@
+################################################
+#PySpark
+################################################
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, explode_outer
+
+# Initialize Spark session
+#=====================================
+spark = SparkSession.builder.appName("CollateralStatusPipeline").getOrCreate()   
+
+# Step 1: Read stocks.json and flatten the nested structure
+#=====================================
+stocks_df = spark.read.json("path/to/stocks.json")
+flattened_stocks_df = stocks_df.selectExpr("stock_symbol", "stock_price")
+
+# Step 2: Read Clients.csv and Collaterals.csv
+#=====================================
+clients_df = spark.read.csv("path/to/Clients.csv", header=True)
+collaterals_df = spark.read.csv("path/to/Collaterals.csv", header=True)
+
+
+# Step 3: Join data and calculate collateral fluctuation
+#=====================================
+combined_df = collaterals_df.join(clients_df, "client_id", "inner").join(flattened_stocks_df, "stock_symbol", "left")
+combined_df = combined_df.withColumn("market_value", combined_df["quantity"] * combined_df["stock_price"])
+combined_df = combined_df.withColumn("fluctuation", combined_df["market_value"] - combined_df["initial_value"])
+
+# Step 4: Create and save collateral_status table as parquet format
+#=====================================
+collateral_status_df = combined_df.select("client_id", "collateral_id", "fluctuation")
+collateral_status_df.write.mode("overwrite").parquet("path/to/collateral_status")
+------------
+# Step 5: Assume stock prices for AAPL and MSFT over a week [least 2 clients with information about their collateral fluction across one week]
+#=====================================
+stock_prices = flattened_stocks_df  # example data [("AAPL", 150, 160), ("MSFT", 200, 210)]
+stock_prices_df = spark.createDataFrame(stock_prices, ["stock_symbol", "price_day1", "price_day7"])
+
+# Step 6: Join data and calculate collateral fluctuation
+#=====================================
+combined_df = collaterals_df.join(clients_df, "client_id", "inner").join(stock_prices_df, "stock_symbol", "left")
+combined_df = combined_df.withColumn("market_value_day1", combined_df["quantity"] * combined_df["price_day1"])
+combined_df = combined_df.withColumn("market_value_day7", combined_df["quantity"] * combined_df["price_day7"])
+combined_df = combined_df.withColumn("fluctuation", combined_df["market_value_day7"] - combined_df["initial_value"])
+
+# Step 7: Create and save collateral_status Delta table
+#=====================================
+combined_df.select("client_id", "collateral_id", "fluctuation").write.mode("overwrite").format("delta").save("path/to/collateral_status")
+
+print("Collateral status table created and saved successfully!")
+
+# Show the resulting table 
+#=====================================
+collateral_status_df.show()
+
+# Stop Spark session
+#=====================================
+spark.stop()
+
